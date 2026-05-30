@@ -189,7 +189,7 @@ export default function App() {
         const visibleKpi = ALL_KPI.filter(k => !hiddenKpi.includes(k.id));
         return (
           <div key="kpi">
-            <div style={{ overflowX: "auto", paddingBottom: 8, cursor: "grab" }}
+            <div style={{ overflowX: "auto", paddingBottom: 8, cursor: "grab", WebkitOverflowScrolling: "touch" }}
               ref={kpiSliderRef}
               onMouseDown={e => {
                 const el = kpiSliderRef.current;
@@ -197,13 +197,23 @@ export default function App() {
                 el._scrollLeft = el.scrollLeft;
                 el._down = true;
               }}
-              onMouseLeave={e => { if(kpiSliderRef.current) kpiSliderRef.current._down = false; }}
-              onMouseUp={e => { if(kpiSliderRef.current) kpiSliderRef.current._down = false; }}
+              onMouseLeave={() => { if(kpiSliderRef.current) kpiSliderRef.current._down = false; }}
+              onMouseUp={() => { if(kpiSliderRef.current) kpiSliderRef.current._down = false; }}
               onMouseMove={e => {
                 const el = kpiSliderRef.current;
                 if (!el || !el._down) return;
                 e.preventDefault();
                 el.scrollLeft = el._scrollLeft - (e.pageX - el.offsetLeft - el._startX);
+              }}
+              onTouchStart={e => {
+                const el = kpiSliderRef.current;
+                el._startX = e.touches[0].pageX;
+                el._scrollLeft = el.scrollLeft;
+              }}
+              onTouchMove={e => {
+                const el = kpiSliderRef.current;
+                if (!el) return;
+                el.scrollLeft = el._scrollLeft - (e.touches[0].pageX - el._startX);
               }}
             >
               <div style={{ display: "flex", gap: 14, width: "max-content", paddingRight: 4 }}>
