@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, ReferenceLine } from "recharts";
 
 const formatDate = (d) => new Date(d).toLocaleDateString("ru-RU", { day: "2-digit", month: "2-digit", year: "2-digit" });
@@ -17,7 +17,17 @@ const TABS = [
   { id: "fertilizers", label: "🧪 Удобрения" },
 ];
 
-// Helpers для localStorage
+// Все возможные виджеты дашборда
+const ALL_WIDGETS = [
+  { id: "kpi",      label: "📈 Статистика" },
+  { id: "stock",    label: "🧪 Остатки склада" },
+  { id: "chart_ppm", label: "⚡ График PPM" },
+  { id: "chart_ph",  label: "🧪 График pH" },
+  { id: "chart_ec",  label: "🔋 График EC" },
+  { id: "chart_vol", label: "💧 График литража" },
+  { id: "history",   label: "📋 История поливов" },
+];
+
 const load = (key, fallback) => {
   try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
   catch { return fallback; }
@@ -32,22 +42,27 @@ export default function App() {
   const [logs, setLogs]               = useState(() => load("logs", []));
   const [tab, setTab]                 = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [saved, setSaved]             = useState(false); // индикатор сохранения
+  const [saved, setSaved]             = useState(false);
 
-  const [logForm, setLogForm]   = useState({ date: today(), volume: "", ppm: "", ph: "", notes: "", amounts: {} });
+  // Настройки дашборда: порядок и видимость виджетов
+  const [widgetOrder,   setWidgetOrder]   = useState(() => load("widgetOrder",   ALL_WIDGETS.map(w => w.id)));
+  const [hiddenWidgets, setHiddenWidgets] = useState(() => load("hiddenWidgets", []));
+  const [editDash, setEditDash]           = useState(false);
+  const dragItem    = useRef(null);
+  const dragOverItem = useRef(null);
+
+  const [logForm, setLogForm]   = useState({ date: today(), volume: "", ppm: "", ph: "", ec: "", notes: "", amounts: {} });
   const [mvForm, setMvForm]     = useState({ fertId: "", type: "in", amount: "", date: today(), note: "" });
   const [newFert, setNewFert]   = useState({ name: "", unit: "мл" });
   const [showFertForm, setShowFertForm] = useState(false);
   const [openHistory, setOpenHistory]   = useState(null);
   const [deletingId, setDeletingId]     = useState(null);
 
-  // Автосохранение при каждом изменении данных
   useEffect(() => { save("ferts", fertilizers); }, [fertilizers]);
   useEffect(() => { save("movements", movements); }, [movements]);
-  useEffect(() => {
-    save("logs", logs);
-    if (logs.length) { setSaved(true); setTimeout(() => setSaved(false), 1500); }
-  }, [logs]);
+  useEffect(() => { save("logs", logs); if (logs.length) { setSaved(true); setTimeout(() => setSaved(false), 1500); } }, [logs]);
+  useEffect(() => { save("widgetOrder", widgetOrder); }, [widgetOrder]);
+  useEffect(() => { save("hiddenWidgets", hiddenWidgets); }, [hiddenWidgets]);
 
   const stocks = useMemo(() => {
     const map = {};
@@ -72,8 +87,7 @@ export default function App() {
     if (!mvForm.fertId || !mvForm.amount || !mvForm.date) return;
     const updated = [...movements, { ...mvForm, id: Date.now(), amount: Number(mvForm.amount) }]
       .sort((a, b) => new Date(b.date) - new Date(a.date));
-    setMovements(updated);
-    save("movements", updated);
+    setMovements(updated); save("movements", updated);
     setSaved(true); setTimeout(() => setSaved(false), 1500);
     setMvForm(p => ({ ...p, amount: "", note: "" }));
   };
@@ -89,10 +103,10 @@ export default function App() {
       const updMvs = [...movements, ...newMvs].sort((a, b) => new Date(b.date) - new Date(a.date));
       setMovements(updMvs); save("movements", updMvs);
     }
-    const updLogs = [{ ...logForm, id: Date.now(), ppm: Number(logForm.ppm), ph: Number(logForm.ph), volume: Number(logForm.volume) }, ...logs]
+    const updLogs = [{ ...logForm, id: Date.now(), ppm: Number(logForm.ppm), ph: Number(logForm.ph), ec: Number(logForm.ec) || 0, volume: Number(logForm.volume) }, ...logs]
       .sort((a, b) => new Date(b.date) - new Date(a.date));
     setLogs(updLogs); save("logs", updLogs);
-    setLogForm({ date: today(), volume: "", ppm: "", ph: "", notes: "", amounts: {} });
+    setLogForm({ date: today(), volume: "", ppm: "", ph: "", ec: "", notes: "", amounts: {} });
   };
 
   const addFertilizer = () => {
@@ -111,15 +125,157 @@ export default function App() {
   };
 
   const chartData = useMemo(() => [...logs].reverse().slice(-20).map(l => ({
-    date: formatDate(l.date), ppm: l.ppm, ph: l.ph, volume: l.volume,
+    date: formatDate(l.date), ppm: l.ppm, ph: l.ph, ec: l.ec || 0, volume: l.volume,
   })), [logs]);
 
   const totalVolume = logs.reduce((s, l) => s + l.volume, 0);
   const avgPPM = logs.length ? Math.round(logs.reduce((s, l) => s + l.ppm, 0) / logs.length) : 0;
-  const avgPH  = logs.length ? (logs.reduce((s, l) => s + l.ph, 0) / logs.length).toFixed(1) : 0;
+  const avgPH  = logs.length ? (logs.reduce((s, l) => s + l.ph,  0) / logs.length).toFixed(1) : 0;
+  const avgEC  = logs.length ? (logs.reduce((s, l) => s + (l.ec||0), 0) / logs.length).toFixed(2) : 0;
   const lastLog = logs[0];
   const fertMovements = (fertId) => movements.filter(m => m.fertId === fertId).sort((a, b) => new Date(b.date) - new Date(a.date));
   const navigate = (id) => { setTab(id); setSidebarOpen(false); };
+
+  // Drag & drop для виджетов
+  const onDragStart = (id) => { dragItem.current = id; };
+  const onDragEnter = (id) => { dragOverItem.current = id; };
+  const onDragEnd   = () => {
+    const order = [...widgetOrder];
+    const from = order.indexOf(dragItem.current);
+    const to   = order.indexOf(dragOverItem.current);
+    if (from === -1 || to === -1) return;
+    order.splice(from, 1);
+    order.splice(to, 0, dragItem.current);
+    setWidgetOrder(order);
+    dragItem.current = null; dragOverItem.current = null;
+  };
+
+  const toggleWidget = (id) => {
+    setHiddenWidgets(prev => prev.includes(id) ? prev.filter(w => w !== id) : [...prev, id]);
+  };
+
+  const visibleWidgets = widgetOrder.filter(id => !hiddenWidgets.includes(id));
+
+  // Рендер виджета по id
+  const renderWidget = (id) => {
+    switch(id) {
+      case "kpi": return (
+        <div key="kpi" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
+          {[
+            { label: "Всего внесено", val: `${totalVolume} л`, icon: "💧", sub: `${logs.length} поливов` },
+            { label: "Средний PPM",   val: avgPPM || "—",      icon: "⚡", sub: lastLog ? `Последний: ${lastLog.ppm}` : "—" },
+            { label: "Средний pH",    val: avgPH  || "—",      icon: "🧪", sub: lastLog ? `Последний: ${lastLog.ph}`  : "—" },
+            { label: "Средний EC",    val: avgEC  || "—",      icon: "🔋", sub: lastLog ? `Последний: ${lastLog.ec || "—"}` : "—" },
+          ].map(({ label, val, icon, sub }) => (
+            <div key={label} className="card">
+              <div style={{ fontSize: 20, marginBottom: 8 }}>{icon}</div>
+              <div className="stat-val" style={{ color: "#58a6ff", marginBottom: 4 }}>{val}</div>
+              <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 2 }}>{label}</div>
+              <div style={{ fontSize: 11, color: "#6e7681" }}>{sub}</div>
+            </div>
+          ))}
+        </div>
+      );
+      case "stock": return (
+        <div key="stock" className="card">
+          <div className="section-title">Остатки на складе</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
+            {fertilizers.map(f => {
+              const stock = stocks[f.id] || 0;
+              const empty = stock <= 0; const low = stock > 0 && stock < 50;
+              return (
+                <div key={f.id} style={{ background: "#0d1117", borderRadius: 8, padding: "14px 16px", borderLeft: `3px solid ${empty ? "#f85149" : low ? "#e3b341" : "#3fb950"}` }}>
+                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{f.name}</div>
+                  <div style={{ fontSize: 22, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, color: empty ? "#f85149" : low ? "#e3b341" : "#3fb950", marginBottom: 4 }}>
+                    {Math.max(0, stock).toFixed(1)} <span style={{ fontSize: 13, fontWeight: 400 }}>{f.unit}</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: "#6e7681" }}>Использовано: {totalUsed[f.id] || 0} {f.unit}</div>
+                  {empty && <div className="tag-red" style={{ marginTop: 6, display: "inline-block" }}>Закончилось!</div>}
+                  {low && !empty && <div className="tag-yellow" style={{ marginTop: 6, display: "inline-block" }}>Мало</div>}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      );
+      case "chart_ppm": return logs.length > 0 ? (
+        <div key="chart_ppm" className="card">
+          <div className="section-title">⚡ PPM за время</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+              <XAxis dataKey="date" tick={{ fill: "#6e7681", fontSize: 11 }} />
+              <YAxis tick={{ fill: "#6e7681", fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, color: "#e6edf3" }} />
+              <Line type="monotone" dataKey="ppm" stroke="#58a6ff" strokeWidth={2} dot={{ fill: "#58a6ff", r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : null;
+      case "chart_ph": return logs.length > 0 ? (
+        <div key="chart_ph" className="card">
+          <div className="section-title">🧪 pH за время</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+              <XAxis dataKey="date" tick={{ fill: "#6e7681", fontSize: 11 }} />
+              <YAxis domain={[4, 9]} tick={{ fill: "#6e7681", fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, color: "#e6edf3" }} />
+              <ReferenceLine y={5.5} stroke="#3fb950" strokeDasharray="4 4" />
+              <ReferenceLine y={6.5} stroke="#3fb950" strokeDasharray="4 4" />
+              <Line type="monotone" dataKey="ph" stroke="#e3b341" strokeWidth={2} dot={{ fill: "#e3b341", r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : null;
+      case "chart_ec": return logs.length > 0 ? (
+        <div key="chart_ec" className="card">
+          <div className="section-title">🔋 EC за время</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+              <XAxis dataKey="date" tick={{ fill: "#6e7681", fontSize: 11 }} />
+              <YAxis tick={{ fill: "#6e7681", fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, color: "#e6edf3" }} />
+              <Line type="monotone" dataKey="ec" stroke="#bc8cff" strokeWidth={2} dot={{ fill: "#bc8cff", r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : null;
+      case "chart_vol": return logs.length > 0 ? (
+        <div key="chart_vol" className="card">
+          <div className="section-title">💧 Литраж по дням</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <BarChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
+              <XAxis dataKey="date" tick={{ fill: "#6e7681", fontSize: 11 }} />
+              <YAxis tick={{ fill: "#6e7681", fontSize: 11 }} />
+              <Tooltip contentStyle={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, color: "#e6edf3" }} />
+              <Bar dataKey="volume" fill="#238636" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ) : null;
+      case "history": return logs.length > 0 ? (
+        <div key="history" className="card">
+          <div className="section-title">📋 История поливов</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+            {logs.slice(0, 10).map(log => (
+              <div key={log.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "#0d1117", borderRadius: 8, fontSize: 13 }}>
+                <span style={{ color: "#8b949e", minWidth: 70 }}>{formatDate(log.date)}</span>
+                <span style={{ color: "#58a6ff", minWidth: 55 }}>💧 {log.volume}л</span>
+                <span style={{ minWidth: 75 }}>⚡ {log.ppm} ppm</span>
+                <span style={{ minWidth: 55 }}>🧪 {log.ph}</span>
+                <span style={{ minWidth: 65, color: "#bc8cff" }}>🔋 {log.ec || "—"}</span>
+                {log.notes && <span style={{ color: "#6e7681", fontSize: 12 }}>{log.notes}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null;
+      default: return null;
+    }
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: "#0d1117", color: "#e6edf3", fontFamily: "'IBM Plex Mono', monospace" }}>
@@ -137,7 +293,6 @@ export default function App() {
         .btn-icon { cursor: pointer; background: transparent; border: none; padding: 4px 8px; border-radius: 5px; font-size: 15px; color: #6e7681; transition: all 0.15s; }
         .btn-icon:hover { background: #3d0000; color: #f85149; }
         .card { background: #161b22; border: 1px solid #21262d; border-radius: 12px; padding: 20px; }
-        .tag-green { background: #0d4429; color: #3fb950; border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 600; }
         .tag-yellow { background: #2d1f00; color: #e3b341; border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 600; }
         .tag-red { background: #3d0000; color: #f85149; border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 600; }
         .tag-blue { background: #0d2149; color: #58a6ff; border-radius: 20px; padding: 2px 10px; font-size: 11px; font-weight: 600; }
@@ -154,21 +309,21 @@ export default function App() {
         .sidebar-btn:hover { background: #21262d; color: #e6edf3; }
         .sidebar-btn.active { background: #21262d; color: #58a6ff; }
         .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 300; display: flex; align-items: center; justify-content: center; }
-        .modal { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; max-width: 360px; width: 90%; }
+        .modal { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 24px; max-width: 400px; width: 90%; }
         .save-toast { position: fixed; bottom: 24px; right: 24px; background: #0d4429; color: #3fb950; border: 1px solid #238636; border-radius: 8px; padding: 10px 18px; font-size: 13px; font-weight: 600; z-index: 400; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
         .save-toast.show { opacity: 1; }
+        .widget-drag { cursor: grab; transition: opacity 0.2s; }
+        .widget-drag:active { cursor: grabbing; opacity: 0.5; }
+        .widget-scroll { display: flex; flex-direction: column; gap: 16px; }
       `}</style>
 
-      {/* Toast уведомление */}
       <div className={`save-toast ${saved ? "show" : ""}`}>✓ Сохранено</div>
-
-      {/* Overlay */}
       <div className={`overlay ${sidebarOpen ? "open" : ""}`} onClick={() => setSidebarOpen(false)} />
 
       {/* Sidebar */}
       <div className={`sidebar ${sidebarOpen ? "open" : ""}`}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
-          <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 14, color: "#e6edf3" }}>Меню</span>
+          <span style={{ fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, fontSize: 14 }}>Меню</span>
           <button className="btn-icon" style={{ fontSize: 18 }} onClick={() => setSidebarOpen(false)}>✕</button>
         </div>
         {TABS.map(t => (
@@ -209,107 +364,63 @@ export default function App() {
         </div>
       )}
 
+      {/* Edit dashboard modal */}
+      {editDash && (
+        <div className="modal-overlay">
+          <div className="modal" style={{ maxWidth: 460 }}>
+            <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>⚙️ Настройка дашборда</div>
+            <div style={{ fontSize: 12, color: "#6e7681", marginBottom: 16 }}>Перетаскивай для изменения порядка. Нажми глаз чтобы скрыть/показать.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {widgetOrder.map(id => {
+                const w = ALL_WIDGETS.find(w => w.id === id);
+                const hidden = hiddenWidgets.includes(id);
+                return (
+                  <div key={id} draggable
+                    onDragStart={() => onDragStart(id)}
+                    onDragEnter={() => onDragEnter(id)}
+                    onDragEnd={onDragEnd}
+                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 14px", background: hidden ? "#0d1117" : "#21262d", borderRadius: 8, cursor: "grab", opacity: hidden ? 0.5 : 1, border: "1px solid #30363d" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ color: "#6e7681" }}>⠿</span>
+                      <span style={{ fontSize: 13 }}>{w?.label}</span>
+                    </div>
+                    <button className="btn-icon" onClick={() => toggleWidget(id)} style={{ fontSize: 16 }}>
+                      {hidden ? "👁️" : "🙈"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+            <button className="btn btn-primary" onClick={() => setEditDash(false)} style={{ marginTop: 16, width: "100%" }}>Готово</button>
+          </div>
+        </div>
+      )}
+
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "24px 20px" }}>
 
         {/* ── DASHBOARD ── */}
         {tab === "dashboard" && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
-              {[
-                { label: "Всего внесено", val: `${totalVolume} л`, icon: "💧", sub: `${logs.length} поливов` },
-                { label: "Средний PPM",   val: avgPPM || "—",      icon: "⚡", sub: lastLog ? `Последний: ${lastLog.ppm}` : "—" },
-                { label: "Средний pH",    val: avgPH  || "—",      icon: "🧪", sub: lastLog ? `Последний: ${lastLog.ph}`  : "—" },
-                { label: "Последний полив", val: lastLog ? formatDate(lastLog.date) : "—", icon: "📅", sub: lastLog ? `${lastLog.volume} л` : "нет данных" },
-              ].map(({ label, val, icon, sub }) => (
-                <div key={label} className="card">
-                  <div style={{ fontSize: 20, marginBottom: 8 }}>{icon}</div>
-                  <div className="stat-val" style={{ color: "#58a6ff", marginBottom: 4 }}>{val}</div>
-                  <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 2 }}>{label}</div>
-                  <div style={{ fontSize: 11, color: "#6e7681" }}>{sub}</div>
-                </div>
-              ))}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            {/* Toolbar */}
+            <div style={{ display: "flex", justifyContent: "flex-end" }}>
+              <button className="btn btn-ghost" onClick={() => setEditDash(true)} style={{ fontSize: 12 }}>⚙️ Настроить дашборд</button>
             </div>
 
-            <div className="card">
-              <div className="section-title">Остатки на складе</div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 12 }}>
-                {fertilizers.map(f => {
-                  const stock = stocks[f.id] || 0;
-                  const empty = stock <= 0; const low = stock > 0 && stock < 50;
-                  return (
-                    <div key={f.id} style={{ background: "#0d1117", borderRadius: 8, padding: "14px 16px", borderLeft: `3px solid ${empty ? "#f85149" : low ? "#e3b341" : "#3fb950"}` }}>
-                      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6 }}>{f.name}</div>
-                      <div style={{ fontSize: 22, fontFamily: "'Space Grotesk', sans-serif", fontWeight: 700, color: empty ? "#f85149" : low ? "#e3b341" : "#3fb950", marginBottom: 4 }}>
-                        {Math.max(0, stock).toFixed(1)} <span style={{ fontSize: 13, fontWeight: 400 }}>{f.unit}</span>
-                      </div>
-                      <div style={{ fontSize: 11, color: "#6e7681" }}>Использовано: {totalUsed[f.id] || 0} {f.unit}</div>
-                      {empty && <div className="tag-red" style={{ marginTop: 6, display: "inline-block" }}>Закончилось!</div>}
-                      {low && !empty && <div className="tag-yellow" style={{ marginTop: 6, display: "inline-block" }}>Мало</div>}
-                    </div>
-                  );
-                })}
-              </div>
+            {/* Виджеты */}
+            <div className="widget-scroll">
+              {visibleWidgets.map(id => {
+                const w = renderWidget(id);
+                if (!w) return null;
+                return (
+                  <div key={id} className="widget-drag" draggable
+                    onDragStart={() => onDragStart(id)}
+                    onDragEnter={() => onDragEnter(id)}
+                    onDragEnd={onDragEnd}>
+                    {w}
+                  </div>
+                );
+              })}
             </div>
-
-            {logs.length > 0 && (
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                <div className="card">
-                  <div className="section-title">PPM за время</div>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <LineChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
-                      <XAxis dataKey="date" tick={{ fill: "#6e7681", fontSize: 11 }} />
-                      <YAxis tick={{ fill: "#6e7681", fontSize: 11 }} />
-                      <Tooltip contentStyle={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, color: "#e6edf3" }} />
-                      <Line type="monotone" dataKey="ppm" stroke="#58a6ff" strokeWidth={2} dot={{ fill: "#58a6ff", r: 3 }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="card">
-                  <div className="section-title">pH за время</div>
-                  <ResponsiveContainer width="100%" height={180}>
-                    <LineChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
-                      <XAxis dataKey="date" tick={{ fill: "#6e7681", fontSize: 11 }} />
-                      <YAxis domain={[4, 9]} tick={{ fill: "#6e7681", fontSize: 11 }} />
-                      <Tooltip contentStyle={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, color: "#e6edf3" }} />
-                      <ReferenceLine y={5.5} stroke="#3fb950" strokeDasharray="4 4" />
-                      <ReferenceLine y={6.5} stroke="#3fb950" strokeDasharray="4 4" />
-                      <Line type="monotone" dataKey="ph" stroke="#e3b341" strokeWidth={2} dot={{ fill: "#e3b341", r: 3 }} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-                <div className="card" style={{ gridColumn: "1/-1" }}>
-                  <div className="section-title">Литраж по дням</div>
-                  <ResponsiveContainer width="100%" height={140}>
-                    <BarChart data={chartData}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#21262d" />
-                      <XAxis dataKey="date" tick={{ fill: "#6e7681", fontSize: 11 }} />
-                      <YAxis tick={{ fill: "#6e7681", fontSize: 11 }} />
-                      <Tooltip contentStyle={{ background: "#161b22", border: "1px solid #30363d", borderRadius: 8, color: "#e6edf3" }} />
-                      <Bar dataKey="volume" fill="#238636" radius={[4, 4, 0, 0]} />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            )}
-
-            {logs.length > 0 && (
-              <div className="card">
-                <div className="section-title">История поливов</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                  {logs.slice(0, 10).map(log => (
-                    <div key={log.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 14px", background: "#0d1117", borderRadius: 8, fontSize: 13 }}>
-                      <span style={{ color: "#8b949e", minWidth: 70 }}>{formatDate(log.date)}</span>
-                      <span style={{ color: "#58a6ff", minWidth: 65 }}>💧 {log.volume} л</span>
-                      <span style={{ minWidth: 80 }}>⚡ {log.ppm} ppm</span>
-                      <span style={{ minWidth: 60 }}>🧪 pH {log.ph}</span>
-                      {log.notes && <span style={{ color: "#6e7681", fontSize: 12 }}>{log.notes}</span>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {logs.length === 0 && movements.length === 0 && (
               <div style={{ textAlign: "center", padding: "60px 0", color: "#6e7681" }}>
@@ -331,10 +442,12 @@ export default function App() {
                     <input type="date" value={logForm.date} onChange={e => setLogForm(p => ({ ...p, date: e.target.value }))} style={{ width: "100%" }} /></div>
                   <div><div style={{ fontSize: 12, color: "#8b949e", marginBottom: 6 }}>Литраж (л)</div>
                     <input type="number" placeholder="напр. 10" value={logForm.volume} onChange={e => setLogForm(p => ({ ...p, volume: e.target.value }))} style={{ width: "100%" }} /></div>
-                  <div><div style={{ fontSize: 12, color: "#8b949e", marginBottom: 6 }}>Входящий PPM</div>
+                  <div><div style={{ fontSize: 12, color: "#8b949e", marginBottom: 6 }}>PPM</div>
                     <input type="number" placeholder="напр. 800" value={logForm.ppm} onChange={e => setLogForm(p => ({ ...p, ppm: e.target.value }))} style={{ width: "100%" }} /></div>
-                  <div><div style={{ fontSize: 12, color: "#8b949e", marginBottom: 6 }}>Входящий pH</div>
+                  <div><div style={{ fontSize: 12, color: "#8b949e", marginBottom: 6 }}>pH</div>
                     <input type="number" step="0.1" placeholder="напр. 6.0" value={logForm.ph} onChange={e => setLogForm(p => ({ ...p, ph: e.target.value }))} style={{ width: "100%" }} /></div>
+                  <div style={{ gridColumn: "1/-1" }}><div style={{ fontSize: 12, color: "#8b949e", marginBottom: 6 }}>EC (мСм/см)</div>
+                    <input type="number" step="0.01" placeholder="напр. 1.8" value={logForm.ec} onChange={e => setLogForm(p => ({ ...p, ec: e.target.value }))} style={{ width: "100%" }} /></div>
                 </div>
                 <div>
                   <div style={{ fontSize: 12, color: "#8b949e", marginBottom: 10 }}>Расход удобрений <span style={{ color: "#6e7681" }}>(спишется со склада)</span></div>
@@ -384,7 +497,6 @@ export default function App() {
                 </button>
               </div>
             </div>
-
             {fertilizers.map(f => {
               const stock = Math.max(0, stocks[f.id] || 0);
               const mvs = fertMovements(f.id);
