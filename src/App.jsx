@@ -51,6 +51,24 @@ export default function App() {
   const dragItem    = useRef(null);
   const dragOverItem = useRef(null);
 
+  // Настройки KPI карточек
+  const ALL_KPI = [
+    { id: "volume", label: "Всего внесено", icon: "💧" },
+    { id: "ppm",    label: "Средний PPM",   icon: "⚡" },
+    { id: "ph",     label: "Средний pH",    icon: "🧪" },
+    { id: "ec",     label: "Средний EC",    icon: "🔋" },
+    { id: "last",   label: "Последний полив", icon: "📅" },
+    { id: "count",  label: "Кол-во поливов", icon: "🔢" },
+  ];
+  const [hiddenKpi, setHiddenKpi] = useState(() => load("hiddenKpi", []));
+  const toggleKpi = (id) => {
+    setHiddenKpi(prev => {
+      const next = prev.includes(id) ? prev.filter(k => k !== id) : [...prev, id];
+      save("hiddenKpi", next); return next;
+    });
+  };
+  const kpiSliderRef = useRef(null);
+
   const [logForm, setLogForm]   = useState({ date: today(), volume: "", ppm: "", ph: "", ec: "", notes: "", amounts: {} });
   const [mvForm, setMvForm]     = useState({ fertId: "", type: "in", amount: "", date: today(), note: "" });
   const [newFert, setNewFert]   = useState({ name: "", unit: "мл" });
@@ -159,23 +177,55 @@ export default function App() {
   // Рендер виджета по id
   const renderWidget = (id) => {
     switch(id) {
-      case "kpi": return (
-        <div key="kpi" style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14 }}>
-          {[
-            { label: "Всего внесено", val: `${totalVolume} л`, icon: "💧", sub: `${logs.length} поливов` },
-            { label: "Средний PPM",   val: avgPPM || "—",      icon: "⚡", sub: lastLog ? `Последний: ${lastLog.ppm}` : "—" },
-            { label: "Средний pH",    val: avgPH  || "—",      icon: "🧪", sub: lastLog ? `Последний: ${lastLog.ph}`  : "—" },
-            { label: "Средний EC",    val: avgEC  || "—",      icon: "🔋", sub: lastLog ? `Последний: ${lastLog.ec || "—"}` : "—" },
-          ].map(({ label, val, icon, sub }) => (
-            <div key={label} className="card">
-              <div style={{ fontSize: 20, marginBottom: 8 }}>{icon}</div>
-              <div className="stat-val" style={{ color: "#58a6ff", marginBottom: 4 }}>{val}</div>
-              <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 2 }}>{label}</div>
-              <div style={{ fontSize: 11, color: "#6e7681" }}>{sub}</div>
+      case "kpi": {
+        const kpiData = {
+          volume: { label: "Всего внесено", val: `${totalVolume} л`,  icon: "💧", sub: `${logs.length} поливов` },
+          ppm:    { label: "Средний PPM",   val: avgPPM || "—",       icon: "⚡", sub: lastLog ? `Посл: ${lastLog.ppm}` : "—" },
+          ph:     { label: "Средний pH",    val: avgPH  || "—",       icon: "🧪", sub: lastLog ? `Посл: ${lastLog.ph}`  : "—" },
+          ec:     { label: "Средний EC",    val: avgEC  || "—",       icon: "🔋", sub: lastLog ? `Посл: ${lastLog.ec || "—"}` : "—" },
+          last:   { label: "Последний полив", val: lastLog ? formatDate(lastLog.date) : "—", icon: "📅", sub: lastLog ? `${lastLog.volume} л` : "—" },
+          count:  { label: "Кол-во поливов", val: logs.length,        icon: "🔢", sub: `всего записей` },
+        };
+        const visibleKpi = ALL_KPI.filter(k => !hiddenKpi.includes(k.id));
+        return (
+          <div key="kpi">
+            <div style={{ overflowX: "auto", paddingBottom: 8, cursor: "grab" }}
+              ref={kpiSliderRef}
+              onMouseDown={e => {
+                const el = kpiSliderRef.current;
+                el._startX = e.pageX - el.offsetLeft;
+                el._scrollLeft = el.scrollLeft;
+                el._down = true;
+              }}
+              onMouseLeave={e => { if(kpiSliderRef.current) kpiSliderRef.current._down = false; }}
+              onMouseUp={e => { if(kpiSliderRef.current) kpiSliderRef.current._down = false; }}
+              onMouseMove={e => {
+                const el = kpiSliderRef.current;
+                if (!el || !el._down) return;
+                e.preventDefault();
+                el.scrollLeft = el._scrollLeft - (e.pageX - el.offsetLeft - el._startX);
+              }}
+            >
+              <div style={{ display: "flex", gap: 14, width: "max-content", paddingRight: 4 }}>
+                {visibleKpi.map(k => {
+                  const d = kpiData[k.id];
+                  return (
+                    <div key={k.id} className="card" style={{ minWidth: 180, userSelect: "none" }}>
+                      <div style={{ fontSize: 20, marginBottom: 8 }}>{d.icon}</div>
+                      <div className="stat-val" style={{ color: "#58a6ff", marginBottom: 4 }}>{d.val}</div>
+                      <div style={{ fontSize: 11, color: "#8b949e", marginBottom: 2 }}>{d.label}</div>
+                      <div style={{ fontSize: 11, color: "#6e7681" }}>{d.sub}</div>
+                    </div>
+                  );
+                })}
+                {visibleKpi.length === 0 && (
+                  <div style={{ fontSize: 13, color: "#6e7681", padding: "20px 0" }}>Все карточки скрыты. Нажми «Настроить дашборд» чтобы включить.</div>
+                )}
+              </div>
             </div>
-          ))}
-        </div>
-      );
+          </div>
+        );
+      }
       case "stock": return (
         <div key="stock" className="card">
           <div className="section-title">Остатки на складе</div>
@@ -369,8 +419,10 @@ export default function App() {
         <div className="modal-overlay">
           <div className="modal" style={{ maxWidth: 460 }}>
             <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>⚙️ Настройка дашборда</div>
-            <div style={{ fontSize: 12, color: "#6e7681", marginBottom: 16 }}>Перетаскивай для изменения порядка. Нажми глаз чтобы скрыть/показать.</div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontSize: 12, color: "#6e7681", marginBottom: 14 }}>Перетаскивай для порядка. Нажми 👁 чтобы скрыть/показать.</div>
+
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#8b949e", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Разделы</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
               {widgetOrder.map(id => {
                 const w = ALL_WIDGETS.find(w => w.id === id);
                 const hidden = hiddenWidgets.includes(id);
@@ -391,7 +443,22 @@ export default function App() {
                 );
               })}
             </div>
-            <button className="btn btn-primary" onClick={() => setEditDash(false)} style={{ marginTop: 16, width: "100%" }}>Готово</button>
+
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#8b949e", letterSpacing: 1, textTransform: "uppercase", marginBottom: 8 }}>Карточки статистики</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 16 }}>
+              {ALL_KPI.map(k => {
+                const hidden = hiddenKpi.includes(k.id);
+                return (
+                  <div key={k.id} onClick={() => toggleKpi(k.id)}
+                    style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "8px 12px", background: hidden ? "#0d1117" : "#21262d", borderRadius: 8, cursor: "pointer", opacity: hidden ? 0.5 : 1, border: "1px solid #30363d" }}>
+                    <span style={{ fontSize: 13 }}>{k.icon} {k.label}</span>
+                    <span style={{ fontSize: 14 }}>{hidden ? "👁️" : "🙈"}</span>
+                  </div>
+                );
+              })}
+            </div>
+
+            <button className="btn btn-primary" onClick={() => setEditDash(false)} style={{ width: "100%" }}>Готово</button>
           </div>
         </div>
       )}
