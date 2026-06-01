@@ -31,8 +31,10 @@ const ALL_KPI = [
 const TABS = [
   { id: "dashboard",    label: "📊 Дашборд" },
   { id: "add",          label: "➕ Полив" },
+  { id: "history_page", label: "📋 История" },
   { id: "stock",        label: "📦 Склад" },
   { id: "fertilizers",  label: "🧪 Удобрения" },
+  { id: "plants",       label: "🌿 Растения" },
 ];
 const mkPlant = (name) => ({
   id: Date.now() + Math.random(), name,
@@ -95,6 +97,8 @@ export default function App() {
   const [newFert,   setNewFert]   = useState({ name: "", unit: "мл" });
   const [showFertForm,  setShowFertForm]  = useState(false);
   const [openHistory,   setOpenHistory]   = useState(null);
+  const [historyPlantId, setHistoryPlantId] = useState(null); // для страницы истории
+  const [logPlantId, setLogPlantId] = useState(null); // растение для полива
   const kpiSliderRef = useRef(null);
 
   const plant = plants.find(p => p.id === plantId) || plants[0];
@@ -153,6 +157,8 @@ export default function App() {
 
   const saveLog = () => {
     const vol = Number(logForm.volume || 0);
+    const targetId = logPlantId || plant.id; // растение для сохранения
+    const targetPlant = plants.find(p => p.id === targetId) || plant;
     const newMvs = fertilizers
       .filter(f => logForm.amounts[f.id] && Number(logForm.amounts[f.id]) > 0)
       .map(f => ({ id: Date.now()+Math.random(), fertId: f.id, type:"out", amount: calcActualMl(f.id), date: logForm.date, note: editingLog ? "Полив (ред.)" : "Полив" }));
@@ -168,25 +174,25 @@ export default function App() {
       drain: drainForm.volume ? { volume: Number(drainForm.volume), ppm: Number(drainForm.ppm), ph: Number(drainForm.ph), ec: Number(drainForm.ec)||0, notes: drainForm.notes } : null,
     };
 
-    // Обновляем глобальные движения
     let updMvs = movements;
     if (editingLog) {
-      const oldLog = logs.find(l => l.id === editingLog);
+      const oldLog = targetPlant.logs.find(l => l.id === editingLog);
       if (oldLog) updMvs = updMvs.filter(m => !(m.note?.includes("Полив") && m.date === oldLog.date));
     }
     updMovements([...updMvs, ...newMvs].sort((a,b) => new Date(b.date)-new Date(a.date)));
 
-    updPlant(plant.id, p => {
+    updPlant(targetId, p => {
       const updLogs = editingLog
         ? p.logs.map(l => l.id === editingLog ? newLog : l).sort((a,b)=>new Date(b.date)-new Date(a.date))
         : [newLog, ...p.logs].sort((a,b)=>new Date(b.date)-new Date(a.date));
       return { ...p, logs: updLogs };
     });
-    setLogForm(emptyLog); setDrainForm(emptyDrain); setLogStep(1); setEditingLog(null);
+    setLogForm(emptyLog); setDrainForm(emptyDrain); setLogStep(1); setEditingLog(null); setLogPlantId(null);
   };
 
-  const startEditLog = (log) => {
+  const startEditLog = (log, targetPlantId) => {
     setEditingLog(log.id);
+    setLogPlantId(targetPlantId || plant.id);
     setLogForm({
       date: log.date, volume: log.volume, ppm: log.ppm, ph: log.ph, ec: log.ec || "",
       notes: log.notes || "", amounts: log.fertRaw || log.amounts || {}, fertModes: log.fertModes || {},
@@ -195,9 +201,9 @@ export default function App() {
     setLogStep(1); setTab("add");
   };
 
-  const cancelEdit = () => { setEditingLog(null); setLogForm(emptyLog); setDrainForm(emptyDrain); setLogStep(1); };
-  const deleteLog = (logId) => {
-    updPlant(plant.id, p => ({ ...p, logs: p.logs.filter(l => l.id !== logId) }));
+  const cancelEdit = () => { setEditingLog(null); setLogForm(emptyLog); setDrainForm(emptyDrain); setLogStep(1); setLogPlantId(null); };
+  const deleteLog = (logId, targetPlantId) => {
+    updPlant(targetPlantId || plant.id, p => ({ ...p, logs: p.logs.filter(l => l.id !== logId) }));
   };
   const addFertilizer = () => {
     if (!newFert.name) return;
@@ -556,9 +562,6 @@ export default function App() {
           <button className="btn-icon" style={{ fontSize:18 }} onClick={()=>setSidebarOpen(false)}>✕</button>
         </div>
         {TABS.map(t => <button key={t.id} className={`sidebar-btn ${tab===t.id?"active":""}`} onClick={()=>navigate(t.id)}>{t.label}</button>)}
-        <div style={{ marginTop:12, borderTop:"1px solid #21262d", paddingTop:12 }}>
-          <button className="sidebar-btn" onClick={()=>{setShowPlantMgr(true);setSidebarOpen(false);}}>🌿 Управление растениями</button>
-        </div>
         <div style={{ marginTop:"auto", paddingTop:16, borderTop:"1px solid #21262d", fontSize:11, color:"#6e7681" }}>💾 Автосохранение</div>
       </div>
 
@@ -578,18 +581,19 @@ export default function App() {
         </div>
       </div>
 
-      {/* Вкладки растений */}
-      <div style={{ padding:"8px 20px", borderBottom:"1px solid #21262d", overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
-        <div style={{ display:"flex", gap:8, width:"max-content" }}>
-          {plants.map(p => (
-            <button key={p.id} className={`plant-tab ${p.id===plantId?"active":"inactive"}`}
-              onClick={()=>{ setPlantId(p.id); save("activePlant",p.id); }}>
-              {p.name}
-            </button>
-          ))}
-          <button className="plant-tab inactive" onClick={()=>setShowPlantMgr(true)}>＋</button>
+      {/* Вкладки растений — только на дашборде */}
+      {tab==="dashboard" && (
+        <div style={{ padding:"8px 20px", borderBottom:"1px solid #21262d", overflowX:"auto", WebkitOverflowScrolling:"touch" }}>
+          <div style={{ display:"flex", gap:8, width:"max-content" }}>
+            {plants.map(p => (
+              <button key={p.id} className={`plant-tab ${p.id===plantId?"active":"inactive"}`}
+                onClick={()=>{ setPlantId(p.id); save("activePlant",p.id); }}>
+                {p.name}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Modals */}
       {deletingFertId && (
@@ -609,33 +613,6 @@ export default function App() {
           <div style={{ display:"flex", gap:10 }}>
             <button className="btn btn-red" onClick={()=>deletePlant(deletingPlantId)}>Удалить</button>
             <button className="btn btn-ghost" onClick={()=>setDeletingPlantId(null)}>Отмена</button>
-          </div>
-        </div></div>
-      )}
-      {showPlantMgr && (
-        <div className="modal-overlay"><div className="modal">
-          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:16 }}>
-            <div style={{ fontSize:15, fontWeight:600 }}>🌿 Растения</div>
-            <button className="btn-icon" style={{ fontSize:18 }} onClick={()=>setShowPlantMgr(false)}>✕</button>
-          </div>
-          <div style={{ display:"flex", flexDirection:"column", gap:8, marginBottom:16 }}>
-            {plants.map(p => (
-              <div key={p.id} style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px", background:"#0d1117", borderRadius:8 }}>
-                {renamingId===p.id ? <>
-                  <input value={renamingVal} onChange={e=>setRenamingVal(e.target.value)} style={{ flex:1 }}/>
-                  <button className="btn btn-primary" style={{ padding:"6px 12px" }} onClick={renamePlant}>✓</button>
-                  <button className="btn btn-ghost" style={{ padding:"6px 12px" }} onClick={()=>setRenamingId(null)}>✕</button>
-                </> : <>
-                  <span style={{ flex:1, fontSize:13, fontWeight: p.id===plantId?600:400, color: p.id===plantId?"#3fb950":"#e6edf3" }}>{p.name}</span>
-                  <button className="btn-icon" onClick={()=>{setRenamingId(p.id);setRenamingVal(p.name);}}>✏️</button>
-                  {plants.length>1 && <button className="btn-icon" onClick={()=>setDeletingPlantId(p.id)}>🗑</button>}
-                </>}
-              </div>
-            ))}
-          </div>
-          <div style={{ display:"flex", gap:8 }}>
-            <input placeholder="Название нового растения" value={newPlantName} onChange={e=>setNewPlantName(e.target.value)} style={{ flex:1 }}/>
-            <button className="btn btn-primary" onClick={addPlant}>+ Добавить</button>
           </div>
         </div></div>
       )}
@@ -718,6 +695,15 @@ export default function App() {
               <div className="card">
                 <div className="section-title">💧 Вход раствора</div>
                 <div style={{ display:"flex", flexDirection:"column", gap:12 }}>
+
+                  {/* Выбор растения */}
+                  <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 14px", background:"#0d1117", borderRadius:8 }}>
+                    <span style={{ fontSize:13, color:"#8b949e", minWidth:80 }}>🌱 Растение</span>
+                    <select value={logPlantId || plant.id} onChange={e=>setLogPlantId(Number(e.target.value))}
+                      style={{ flex:1, maxWidth:220, textAlign:"right" }}>
+                      {plants.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
 
                   {/* Дата */}
                   <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"10px 14px", background:"#0d1117", borderRadius:8 }}>
@@ -998,39 +984,27 @@ export default function App() {
             </div>
 
             {/* Список удобрений */}
-            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
               {fertilizers.map(f => {
                 const s = Math.max(0, stocks[f.id]||0);
                 const used = totalUsed[f.id]||0;
                 const empty = (stocks[f.id]||0) <= 0;
                 const low = s > 0 && s < 50;
                 return (
-                  <div key={f.id} className="card" style={{ padding:0, overflow:"hidden" }}>
-                    <div style={{ padding:"14px 18px", display:"flex", alignItems:"center", gap:14 }}>
-                      <div style={{ width:4, alignSelf:"stretch", minHeight:40, borderRadius:2, background:empty?"#f85149":low?"#e3b341":"#3fb950", flexShrink:0 }}/>
-                      <div style={{ flex:1 }}>
-                        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:6 }}>
-                          <span style={{ fontWeight:600, fontSize:14 }}>{f.name}</span>
-                          <button className="btn-icon" onClick={()=>setDeletingFertId(f.id)}>🗑</button>
-                        </div>
-                        <div style={{ display:"flex", gap:16 }}>
-                          <div style={{ background:"#0d1117", borderRadius:6, padding:"6px 12px", flex:1, textAlign:"center" }}>
-                            <div style={{ fontSize:10, color:"#6e7681", marginBottom:3 }}>ОСТАТОК</div>
-                            <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:18, color:empty?"#f85149":low?"#e3b341":"#3fb950" }}>
-                              {s.toFixed(1)} <span style={{ fontSize:11, fontWeight:400 }}>{f.unit}</span>
-                            </div>
-                          </div>
-                          <div style={{ background:"#0d1117", borderRadius:6, padding:"6px 12px", flex:1, textAlign:"center" }}>
-                            <div style={{ fontSize:10, color:"#6e7681", marginBottom:3 }}>ИСПОЛЬЗОВАНО</div>
-                            <div style={{ fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:18, color:"#8b949e" }}>
-                              {used} <span style={{ fontSize:11, fontWeight:400 }}>{f.unit}</span>
-                            </div>
-                          </div>
-                        </div>
-                        {empty && <div className="tag-red" style={{ display:"inline-block", marginTop:8 }}>Закончилось!</div>}
-                        {low && !empty && <div className="tag-yellow" style={{ display:"inline-block", marginTop:8 }}>Мало</div>}
+                  <div key={f.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"10px 14px", background:"#161b22", borderRadius:8, border:"1px solid #21262d" }}>
+                    <div style={{ width:3, height:32, borderRadius:2, background:empty?"#f85149":low?"#e3b341":"#3fb950", flexShrink:0 }}/>
+                    <span style={{ fontWeight:600, fontSize:13, flex:1 }}>{f.name}</span>
+                    <div style={{ display:"flex", gap:12, alignItems:"center" }}>
+                      <div style={{ textAlign:"right" }}>
+                        <div style={{ fontSize:10, color:"#6e7681", textTransform:"uppercase", letterSpacing:0.5 }}>Остаток</div>
+                        <div style={{ fontSize:14, fontWeight:700, color:empty?"#f85149":low?"#e3b341":"#3fb950" }}>{s.toFixed(1)} <span style={{ fontSize:11, fontWeight:400, color:"#6e7681" }}>{f.unit}</span></div>
+                      </div>
+                      <div style={{ textAlign:"right" }}>
+                        <div style={{ fontSize:10, color:"#6e7681", textTransform:"uppercase", letterSpacing:0.5 }}>Исп.</div>
+                        <div style={{ fontSize:14, fontWeight:700, color:"#8b949e" }}>{used} <span style={{ fontSize:11, fontWeight:400, color:"#6e7681" }}>{f.unit}</span></div>
                       </div>
                     </div>
+                    <button className="btn-icon" style={{ fontSize:13 }} onClick={()=>setDeletingFertId(f.id)}>🗑</button>
                   </div>
                 );
               })}
@@ -1042,6 +1016,124 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {/* РАСТЕНИЯ */}
+        {tab==="plants" && (
+          <div style={{ maxWidth:520, margin:"0 auto", display:"flex", flexDirection:"column", gap:16 }}>
+
+            {/* Список */}
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              {plants.map(p => (
+                <div key={p.id}>
+                  {renamingId===p.id ? (
+                    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"14px 16px", background:"#161b22", borderRadius:10, border:"1px solid #58a6ff" }}>
+                      <input value={renamingVal} onChange={e=>setRenamingVal(e.target.value)}
+                        onKeyDown={e=>e.key==="Enter"&&renamePlant()}
+                        style={{ flex:1, background:"transparent", border:"none", color:"#e6edf3", fontSize:15, fontWeight:600, outline:"none" }} autoFocus/>
+                      <button className="btn btn-primary" style={{ padding:"6px 14px" }} onClick={renamePlant}>✓</button>
+                      <button className="btn btn-ghost" style={{ padding:"6px 12px" }} onClick={()=>setRenamingId(null)}>✕</button>
+                    </div>
+                  ) : (
+                    <div onClick={()=>{ setPlantId(p.id); save("activePlant",p.id); setTab("dashboard"); }}
+                      style={{ display:"flex", alignItems:"center", gap:14, padding:"14px 16px",
+                        background: p.id===plantId?"#0d2a0d":"#161b22",
+                        borderRadius:10, border:`1px solid ${p.id===plantId?"#238636":"#21262d"}`,
+                        cursor:"pointer" }}>
+                      <div style={{ width:10, height:10, borderRadius:"50%", background: p.id===plantId?"#3fb950":"#30363d", flexShrink:0 }}/>
+                      <div style={{ flex:1 }}>
+                        <div style={{ fontSize:15, fontWeight:600, color: p.id===plantId?"#3fb950":"#e6edf3", marginBottom:2 }}>{p.name}</div>
+                        <div style={{ fontSize:11, color:"#6e7681" }}>{(p.logs||[]).length} поливов</div>
+                      </div>
+                      <div style={{ display:"flex", gap:6 }} onClick={e=>e.stopPropagation()}>
+                        <button className="btn-icon" style={{ fontSize:14 }} onClick={()=>{ setRenamingId(p.id); setRenamingVal(p.name); }}>✍️</button>
+                        {plants.length>1 && <button className="btn-icon" style={{ fontSize:14 }} onClick={()=>setDeletingPlantId(p.id)}>❌</button>}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Добавить */}
+            <div className="card">
+              <div className="section-title">Добавить растение</div>
+              <div style={{ display:"flex", gap:8 }}>
+                <input placeholder="Название..." value={newPlantName}
+                  onChange={e=>setNewPlantName(e.target.value)}
+                  onKeyDown={e=>e.key==="Enter"&&addPlant()}
+                  style={{ flex:1 }}/>
+                <button className="btn btn-primary" onClick={addPlant}>+ Добавить</button>
+              </div>
+            </div>
+
+          </div>
+        )}
+
+        {/* ИСТОРИЯ */}
+        {tab==="history_page" && (() => {
+          const hPlant = plants.find(p => p.id === (historyPlantId || plantId)) || plant;
+          const hLogs = hPlant?.logs || [];
+          const renderLogRow = (log) => (
+            <div key={log.id} style={{ background:"#0d1117", borderRadius:8, overflow:"hidden" }}>
+              <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", padding:"5px 12px" }}>
+                <span style={{ fontSize:11, color:"#6e7681", fontWeight:600, minWidth:65 }}>{fmt(log.date)}</span>
+                <div style={{ display:"flex", gap:8 }}>
+                  <button style={{ cursor:"pointer", background:"transparent", border:"none", fontSize:14, padding:"0 2px", lineHeight:1 }} onClick={()=>startEditLog(log, hPlant.id)}>✍️</button>
+                  <button style={{ cursor:"pointer", background:"transparent", border:"none", fontSize:14, padding:"0 2px", lineHeight:1 }} onClick={()=>{ if(window.confirm("Удалить этот полив?")) deleteLog(log.id, hPlant.id); }}>❌</button>
+                </div>
+              </div>
+              <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", padding:"2px 12px 7px", gap:"3px 0" }}>
+                <div style={{ fontSize:10, color:"#6e7681", textTransform:"uppercase", letterSpacing:0.5 }}>Литраж</div>
+                <div style={{ fontSize:10, color:"#6e7681", textTransform:"uppercase", letterSpacing:0.5 }}>PPM</div>
+                <div style={{ fontSize:10, color:"#6e7681", textTransform:"uppercase", letterSpacing:0.5 }}>pH</div>
+                <div style={{ fontSize:10, color:"#6e7681", textTransform:"uppercase", letterSpacing:0.5 }}>EC</div>
+                <div style={{ fontSize:13, fontWeight:600, color:"#58a6ff" }}>{log.volume}л</div>
+                <div style={{ fontSize:13, fontWeight:600, color:"#e6edf3" }}>{log.ppm}</div>
+                <div style={{ fontSize:13, fontWeight:600, color:"#e6edf3" }}>{log.ph}</div>
+                <div style={{ fontSize:13, fontWeight:600, color:"#bc8cff" }}>{log.ec||"—"}</div>
+                {log.drain && <>
+                  <div style={{ fontSize:11, color:"#3fb950" }}>↓ {log.drain.volume}л</div>
+                  <div style={{ fontSize:11, color:"#3fb950" }}>↓ {log.drain.ppm}</div>
+                  <div style={{ fontSize:11, color:"#3fb950" }}>↓ {log.drain.ph}</div>
+                  <div style={{ fontSize:11, color:"#3fb950" }}>↓ {log.drain.ec||"—"}</div>
+                </>}
+              </div>
+            </div>
+          );
+          return (
+            <div style={{ maxWidth:600, margin:"0 auto", display:"flex", flexDirection:"column", gap:14 }}>
+              {/* Выбор растения */}
+              <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+                {plants.map(p => (
+                  <button key={p.id} onClick={()=>setHistoryPlantId(p.id)}
+                    style={{ padding:"6px 16px", fontSize:13, fontWeight:600, cursor:"pointer", border:"1px solid",
+                      borderRadius:20, fontFamily:"inherit", transition:"all .15s",
+                      borderColor: (historyPlantId||plantId)===p.id?"#238636":"#30363d",
+                      background: (historyPlantId||plantId)===p.id?"#0d2a0d":"transparent",
+                      color: (historyPlantId||plantId)===p.id?"#3fb950":"#8b949e" }}>
+                    {p.name}
+                  </button>
+                ))}
+              </div>
+              {/* Записи */}
+              <div className="card" style={{ padding:"16px 16px" }}>
+                <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12 }}>
+                  <div className="section-title" style={{ marginBottom:0 }}>📋 {hPlant.name}</div>
+                  <span style={{ fontSize:11, color:"#6e7681" }}>{hLogs.length} поливов</span>
+                </div>
+                {hLogs.length > 0 ? (
+                  <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                    {hLogs.map(log => renderLogRow(log))}
+                  </div>
+                ) : (
+                  <div style={{ textAlign:"center", padding:"30px 0", color:"#6e7681", fontSize:13 }}>
+                    Нет поливов для этого растения
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })()}
 
       </div>
     </div>
